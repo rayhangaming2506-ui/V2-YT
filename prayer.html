@@ -1,0 +1,988 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<script src="lock.js"></script>
+<script src="/api/config"></script>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#050506">
+<title>Prayer Tracker · Dashboard</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="sync.js" defer></script>
+<script src="topbar.js" defer></script>
+<style>
+:root {
+  --text-primary: #FAFAFA;
+  --text-secondary: #B8B6B0;
+  --text-tertiary: #76746E;
+  --success: #6BE3A4;
+  --warning: #F2C063;
+  --danger: #FF6B6B;
+  --prayer-green: #2D6A4F;
+  --prayer-green-light: #52B788;
+  --prayer-green-glow: rgba(82, 183, 136, 0.35);
+  --font: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+
+* { box-sizing: border-box; }
+html, body {
+  margin: 0; padding: 0;
+  background: #050506;
+  color: var(--text-secondary);
+  font-family: var(--font);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  -webkit-text-size-adjust: 100%;
+}
+body {
+  min-height: 100vh;
+  position: relative;
+  overflow-x: hidden;
+  padding: max(28px, env(safe-area-inset-top)) 20px 80px;
+}
+body::before {
+  content: '';
+  position: fixed; inset: 0;
+  background:
+    radial-gradient(circle at 75% 10%, rgba(82, 183, 136, 0.12), transparent 45%),
+    radial-gradient(circle at 20% 85%, rgba(45, 106, 79, 0.10), transparent 50%);
+  filter: blur(40px);
+  pointer-events: none;
+  z-index: -2;
+  animation: drift 36s ease-in-out infinite alternate;
+}
+body::after {
+  content: '';
+  position: fixed; inset: 0;
+  background-image: radial-gradient(rgba(255,255,255,0.014) 1px, transparent 1px);
+  background-size: 3px 3px;
+  pointer-events: none;
+  z-index: -1;
+}
+@keyframes drift {
+  0%   { transform: translate3d(0,0,0); }
+  100% { transform: translate3d(-22px, 14px, 0); }
+}
+
+.page { max-width: 600px; margin: 0 auto; }
+
+.dash-title {
+  margin: 0 0 4px;
+  font-size: 28px; font-weight: 700;
+  letter-spacing: -0.025em;
+  background: linear-gradient(180deg, #FFFFFF 0%, #C7C4BC 120%);
+  -webkit-background-clip: text; background-clip: text;
+  -webkit-text-fill-color: transparent; color: transparent;
+}
+.dash-subtitle {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  margin: 0 0 20px;
+  font-family: var(--font-mono);
+  letter-spacing: 0.06em;
+}
+@media (max-width: 480px) { .dash-title { font-size: 22px; } }
+
+.section { margin-top: 8px; }
+.section-title {
+  font-size: 10.5px; font-weight: 700;
+  letter-spacing: 0.18em; text-transform: uppercase;
+  color: var(--text-tertiary);
+  display: flex; align-items: center; gap: 12px;
+  margin-bottom: 12px;
+}
+.section-title::before {
+  content: ''; width: 18px; height: 1px;
+  background: var(--text-tertiary); opacity: 0.6;
+}
+.section-title::after {
+  content: ''; flex: 1; height: 1px;
+  background: linear-gradient(90deg, rgba(255,255,255,0.08), transparent);
+}
+
+/* ===== RING SUMMARY CARD ===== */
+.ring-card {
+  position: relative;
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 16px;
+  padding: 20px;
+  margin-bottom: 14px;
+  backdrop-filter: blur(24px) saturate(1.2);
+  -webkit-backdrop-filter: blur(24px) saturate(1.2);
+  box-shadow: 0 12px 40px rgba(0,0,0,0.45);
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  overflow: hidden;
+}
+.ring-card::before {
+  content: '';
+  position: absolute; inset: 0;
+  background: radial-gradient(circle at 20% 50%, rgba(82,183,136,0.06), transparent 60%);
+  pointer-events: none;
+}
+
+/* SVG Ring */
+.ring-wrap {
+  position: relative;
+  width: 110px; height: 110px;
+  flex-shrink: 0;
+}
+.ring-wrap svg { width: 100%; height: 100%; display: block; }
+.ring-track { fill: none; stroke: rgba(255,255,255,0.07); stroke-width: 10; }
+.ring-fill {
+  fill: none; stroke-width: 10; stroke-linecap: round;
+  transform: rotate(-90deg); transform-origin: 55px 55px;
+  transition: stroke-dashoffset 0.9s cubic-bezier(0.22,1,0.36,1), stroke 0.6s;
+}
+.ring-overlay {
+  position: absolute; inset: 0;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  pointer-events: none;
+}
+.ring-num {
+  font-size: 26px; font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.04em;
+  color: var(--text-primary); line-height: 1;
+}
+.ring-denom {
+  font-family: var(--font-mono);
+  font-size: 10px; font-weight: 700;
+  color: var(--text-tertiary);
+  margin-top: 2px;
+}
+
+.ring-text { flex: 1; }
+.ring-label {
+  font-size: 16px; font-weight: 700;
+  color: var(--text-primary);
+  margin-bottom: 4px;
+}
+.ring-sub {
+  font-size: 12px; color: var(--text-tertiary);
+  margin-bottom: 10px;
+  line-height: 1.4;
+}
+.ring-streak {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 5px 10px; border-radius: 999px;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.08);
+  font-size: 11px; font-weight: 600;
+  color: var(--text-tertiary);
+  letter-spacing: 0.06em;
+  transition: background 0.3s, color 0.3s, border-color 0.3s;
+}
+.ring-streak.active {
+  background: rgba(242,192,99,0.10);
+  color: #F2C063;
+  border-color: rgba(242,192,99,0.28);
+}
+.ring-streak-icon { font-size: 12px; }
+
+/* ===== PRAYER LIST ===== */
+.prayer-list {
+  display: flex; flex-direction: column; gap: 8px;
+  margin-bottom: 14px;
+}
+
+.prayer-row {
+  position: relative;
+  display: flex; align-items: center; gap: 14px;
+  padding: 14px 16px;
+  background: rgba(255,255,255,0.035);
+  border: 1px solid rgba(255,255,255,0.07);
+  border-radius: 14px;
+  cursor: pointer;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  transition: background 0.18s, border-color 0.18s, transform 0.10s;
+  overflow: hidden;
+}
+.prayer-row:active { transform: scale(0.985); }
+.prayer-row:hover { background: rgba(255,255,255,0.055); }
+
+.prayer-row.done {
+  background: rgba(82,183,136,0.07);
+  border-color: rgba(82,183,136,0.18);
+}
+.prayer-row.now {
+  border-color: rgba(255,255,255,0.22);
+  box-shadow: 0 0 0 1px rgba(255,255,255,0.08);
+}
+.prayer-row.sunrise {
+  /* Sunrise is not a prayer, just a marker */
+  cursor: default;
+  opacity: 0.55;
+}
+
+/* Sweep animation on check */
+.prayer-row::after {
+  content: '';
+  position: absolute; inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(82,183,136,0.15), transparent);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.3s;
+}
+.prayer-row.sweep::after { opacity: 1; }
+
+/* Check circle */
+.prayer-check {
+  width: 36px; height: 36px; flex-shrink: 0;
+  border-radius: 50%;
+  border: 2px solid rgba(255,255,255,0.18);
+  background: rgba(0,0,0,0.28);
+  display: flex; align-items: center; justify-content: center;
+  transition: background 0.25s, border-color 0.25s, box-shadow 0.25s;
+  font-size: 17px; line-height: 1;
+}
+.prayer-row.done .prayer-check {
+  background: var(--prayer-green-light);
+  border-color: var(--prayer-green-light);
+  box-shadow: 0 0 14px var(--prayer-green-glow);
+}
+.prayer-row.sunrise .prayer-check {
+  background: transparent;
+  border-color: transparent;
+  font-size: 20px;
+}
+
+/* Prayer name + icon */
+.prayer-info { flex: 1; min-width: 0; }
+.prayer-name {
+  font-size: 17px; font-weight: 700;
+  color: var(--text-primary);
+  display: flex; align-items: center; gap: 7px;
+}
+.prayer-icon { font-size: 18px; line-height: 1; }
+.prayer-row.done .prayer-name { color: rgba(250,250,250,0.6); }
+
+/* NOW badge */
+.prayer-now-badge {
+  display: none;
+  padding: 3px 9px; border-radius: 999px;
+  background: var(--text-primary);
+  color: #0A0A0B;
+  font-size: 11px; font-weight: 800;
+  letter-spacing: 0.04em;
+  margin-left: 2px;
+}
+.prayer-row.now .prayer-now-badge { display: inline-block; }
+
+/* Countdown badge */
+.prayer-countdown {
+  padding: 4px 10px; border-radius: 999px;
+  background: rgba(255,255,255,0.07);
+  border: 1px solid rgba(255,255,255,0.10);
+  font-family: var(--font-mono);
+  font-size: 11px; font-weight: 600;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  display: none;
+}
+.prayer-countdown.visible { display: block; }
+
+/* Prayer time */
+.prayer-time {
+  font-family: var(--font-mono);
+  font-size: 17px; font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+  letter-spacing: 0.02em;
+}
+.prayer-row.done .prayer-time { color: rgba(250,250,250,0.45); }
+.prayer-row.sunrise .prayer-time { color: var(--text-tertiary); }
+
+/* Bell / mute button */
+.prayer-bell {
+  width: 36px; height: 36px; flex-shrink: 0;
+  border: 0; background: rgba(255,255,255,0.06);
+  border-radius: 10px; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 16px; opacity: 0.6;
+  transition: opacity 0.2s, background 0.2s;
+  -webkit-tap-highlight-color: transparent;
+}
+.prayer-bell:hover { opacity: 1; background: rgba(255,255,255,0.10); }
+.prayer-bell.muted { opacity: 0.3; }
+
+/* ===== PROGRESS CALENDAR CARD ===== */
+.progress-card {
+  background: rgba(255,255,255,0.04);
+  border-radius: 16px;
+  padding: 20px;
+  margin-bottom: 14px;
+  backdrop-filter: blur(24px) saturate(1.2);
+  -webkit-backdrop-filter: blur(24px) saturate(1.2);
+  box-shadow: 0 12px 40px rgba(0,0,0,0.45);
+}
+
+.progress-header {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 18px; flex-wrap: wrap; gap: 10px;
+}
+.progress-title-row {
+  font-size: 16px; font-weight: 700; color: var(--text-primary);
+}
+.progress-view-toggle {
+  display: flex; gap: 4px;
+  background: rgba(0,0,0,0.25);
+  border-radius: 12px; padding: 3px;
+}
+.prog-toggle-btn {
+  padding: 6px 16px; border-radius: 9px; border: 0;
+  font-family: inherit; font-size: 12px; font-weight: 700;
+  cursor: pointer; transition: background 0.18s, color 0.18s;
+  background: transparent; color: var(--text-tertiary);
+}
+.prog-toggle-btn.active {
+  background: var(--text-primary); color: #0A0A0B;
+}
+
+.progress-nav {
+  display: flex; align-items: center; gap: 8px;
+}
+.prog-nav-btn {
+  width: 32px; height: 32px; border-radius: 8px; border: 0;
+  background: rgba(255,255,255,0.06); color: var(--text-secondary);
+  font-size: 16px; cursor: pointer; display: flex; align-items: center; justify-content: center;
+  transition: background 0.15s;
+}
+.prog-nav-btn:hover { background: rgba(255,255,255,0.12); }
+
+.cal-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 4px;
+  margin-bottom: 14px;
+}
+.cal-dow {
+  text-align: center;
+  font-family: var(--font-mono);
+  font-size: 10px; font-weight: 700;
+  letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--text-tertiary);
+  padding-bottom: 8px;
+}
+.cal-day {
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  gap: 5px;
+  padding: 8px 2px;
+  border-radius: 10px;
+  min-height: 64px;
+}
+.cal-day-num {
+  font-size: 13px; font-weight: 600;
+  color: var(--text-tertiary);
+  line-height: 1;
+}
+.cal-day.today .cal-day-num {
+  color: var(--text-primary); font-weight: 800;
+}
+.cal-ring {
+  width: 32px; height: 32px; flex-shrink: 0;
+}
+.cal-ring svg { width: 100%; height: 100%; display: block; }
+.cal-ring-track { fill: none; stroke: rgba(255,255,255,0.07); stroke-width: 3.5; }
+.cal-ring-fill {
+  fill: none; stroke-width: 3.5; stroke-linecap: round;
+  transform: rotate(-90deg); transform-origin: 16px 16px;
+}
+.cal-ring-inner {
+  fill: none;
+}
+
+.cal-footer {
+  display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px;
+}
+.cal-month-label {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 6px 14px; border-radius: 999px;
+  border: 1px solid rgba(255,255,255,0.10);
+  font-size: 12px; font-weight: 600;
+  color: var(--text-secondary);
+}
+.cal-share-btn {
+  width: 36px; height: 36px; border-radius: 10px; border: 0;
+  background: rgba(255,255,255,0.06); color: var(--text-secondary);
+  font-size: 16px; cursor: pointer; display: flex; align-items: center; justify-content: center;
+  transition: background 0.15s;
+}
+.cal-share-btn:hover { background: rgba(255,255,255,0.12); }
+
+/* Month view grid */
+.month-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 3px;
+}
+.month-cell {
+  aspect-ratio: 1;
+  border-radius: 8px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 11px; font-weight: 600;
+  color: var(--text-tertiary);
+  background: rgba(255,255,255,0.02);
+  position: relative;
+}
+.month-cell.today { outline: 1px solid rgba(255,255,255,0.20); color: var(--text-primary); }
+.month-cell.empty { background: transparent; }
+.month-cell-dot {
+  width: 5px; height: 5px; border-radius: 50%;
+  position: absolute; bottom: 4px; left: 50%; transform: translateX(-50%);
+}
+
+/* Location display */
+.location-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px 14px;
+  background: rgba(255,255,255,0.03);
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 12px;
+  margin-bottom: 14px;
+  font-size: 12px; color: var(--text-tertiary);
+}
+.location-dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--prayer-green-light);
+  box-shadow: 0 0 6px var(--prayer-green-glow);
+  flex-shrink: 0;
+}
+
+@media (max-width: 480px) {
+  body { padding: max(20px, env(safe-area-inset-top)) 14px 80px; }
+  .ring-card { gap: 16px; }
+  .ring-wrap { width: 90px; height: 90px; }
+  .ring-num { font-size: 22px; }
+  .prayer-name { font-size: 15px; }
+  .prayer-time { font-size: 15px; }
+  .cal-day { min-height: 52px; }
+  .cal-ring { width: 26px; height: 26px; }
+}
+</style>
+</head>
+<body>
+<div class="page">
+
+  <h1 class="dash-title">Prayer Tracker</h1>
+  <p class="dash-subtitle" id="locationLabel">📍 Detecting location…</p>
+
+  <!-- ===== RING SUMMARY ===== -->
+  <div class="section">
+    <div class="section-title">Today</div>
+    <div class="ring-card">
+      <div class="ring-wrap">
+        <svg viewBox="0 0 110 110">
+          <circle class="ring-track" cx="55" cy="55" r="46"/>
+          <circle class="ring-fill" cx="55" cy="55" r="46" id="ringFill"/>
+        </svg>
+        <div class="ring-overlay">
+          <div class="ring-num" id="ringNum">0</div>
+          <div class="ring-denom" id="ringDenom">of 5</div>
+        </div>
+      </div>
+      <div class="ring-text">
+        <div class="ring-label" id="ringLabel">Loading…</div>
+        <div class="ring-sub" id="ringSub">—</div>
+        <div class="ring-streak" id="ringStreak">
+          <span class="ring-streak-icon">🔥</span>
+          <span id="ringStreakNum">0</span> day streak
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== PRAYER LIST ===== -->
+  <div class="section">
+    <div class="section-title">Prayers</div>
+    <div class="prayer-list" id="prayerList"></div>
+  </div>
+
+  <!-- ===== PROGRESS ===== -->
+  <div class="section">
+    <div class="section-title">Your Progress</div>
+    <div class="progress-card">
+      <div class="progress-header">
+        <div class="progress-title-row">Your Progress</div>
+        <div style="display:flex;align-items:center;gap:10px;">
+          <div class="progress-view-toggle">
+            <button class="prog-toggle-btn active" id="btnWeek" onclick="setView('week')">Week</button>
+            <button class="prog-toggle-btn" id="btnMonth" onclick="setView('month')">Month</button>
+          </div>
+          <div class="progress-nav">
+            <button class="prog-nav-btn" onclick="navOffset(-1)">&#8249;</button>
+            <button class="prog-nav-btn" onclick="navOffset(1)">&#8250;</button>
+          </div>
+        </div>
+      </div>
+      <div id="calBody"></div>
+      <div class="cal-footer">
+        <div class="cal-month-label">
+          <span>📅</span>
+          <span id="calMonthLabel">—</span>
+        </div>
+        <button class="cal-share-btn" onclick="shareProgress()" title="Share">⬆</button>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  // ── Storage ──────────────────────────────────────────────────
+  const STORE = 'prayer_tracker_v1';
+
+  function load() {
+    try { return JSON.parse(localStorage.getItem(STORE)) || defaultState(); }
+    catch { return defaultState(); }
+  }
+  function save(s) {
+    localStorage.setItem(STORE, JSON.stringify(s));
+    window.dispatchEvent(new Event('prayer-changed'));
+  }
+  function defaultState() {
+    return { logs: {}, streak: 0, lastStreakDate: '', muted: {}, location: null };
+  }
+
+  // ── Date helpers ──────────────────────────────────────────────
+  function pad2(n) { return String(n).padStart(2,'0'); }
+  function ymd(d) { return d.getFullYear()+'-'+pad2(d.getMonth()+1)+'-'+pad2(d.getDate()); }
+  function today() { return ymd(new Date()); }
+
+  // ── Prayer times (Calculation: MWL method, approximation) ────
+  // We use the Aladhan API for accurate times based on location.
+  const PRAYERS = [
+    { key: 'fajr',    label: 'Fajr',    icon: '✦',  emoji: '🌟' },
+    { key: 'sunrise', label: 'Sunrise', icon: '☀',  emoji: '☀️', marker: true },
+    { key: 'dhuhr',   label: 'Dhuhr',   icon: '☀',  emoji: '🌤' },
+    { key: 'asr',     label: 'Asr',     icon: '⛅', emoji: '⛅' },
+    { key: 'maghrib', label: 'Maghrib', icon: '🌅', emoji: '🌇' },
+    { key: 'isha',    label: "Isha'a",  icon: '🌙', emoji: '🌙' },
+  ];
+
+  let times = {}; // { fajr: '03:09', sunrise: '05:22', ... }
+  let userLat = 52.0705, userLng = 4.3007, userCity = 'The Hague';
+
+  async function fetchTimes(lat, lng) {
+    const d = new Date();
+    const dateStr = pad2(d.getDate())+'-'+pad2(d.getMonth()+1)+'-'+d.getFullYear();
+    try {
+      const r = await fetch(
+        `https://api.aladhan.com/v1/timings/${dateStr}?latitude=${lat}&longitude=${lng}&method=3`
+      );
+      const data = await r.json();
+      if (data && data.data && data.data.timings) {
+        const t = data.data.timings;
+        times = {
+          fajr:    t.Fajr,
+          sunrise: t.Sunrise,
+          dhuhr:   t.Dhuhr,
+          asr:     t.Asr,
+          maghrib: t.Maghrib,
+          isha:    t.Isha,
+        };
+        render();
+        renderCalendar();
+      }
+    } catch(e) {
+      // fallback placeholder times
+      times = { fajr:'03:09', sunrise:'05:22', dhuhr:'13:44', asr:'18:08', maghrib:'22:06', isha:'00:09' };
+      render();
+      renderCalendar();
+    }
+  }
+
+  function getLocation() {
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        pos => {
+          userLat = pos.coords.latitude;
+          userLng = pos.coords.longitude;
+          // reverse geocode with nominatim
+          fetch(`https://nominatim.openstreetmap.org/reverse?lat=${userLat}&lon=${userLng}&format=json`)
+            .then(r => r.json())
+            .then(d => {
+              const city = d.address && (d.address.city || d.address.town || d.address.village || d.address.county) || 'Your location';
+              userCity = city;
+              document.getElementById('locationLabel').textContent = '📍 ' + city;
+              const s = load(); s.location = { lat: userLat, lng: userLng, city }; save(s);
+            })
+            .catch(() => {});
+          fetchTimes(userLat, userLng);
+        },
+        () => {
+          // use saved or default
+          const s = load();
+          if (s.location) { userLat = s.location.lat; userLng = s.location.lng; userCity = s.location.city; }
+          document.getElementById('locationLabel').textContent = '📍 ' + userCity;
+          fetchTimes(userLat, userLng);
+        }
+      );
+    } else {
+      document.getElementById('locationLabel').textContent = '📍 ' + userCity;
+      fetchTimes(userLat, userLng);
+    }
+  }
+
+  // ── Parse "HH:MM" → minutes since midnight ────────────────────
+  function toMin(hhmm) {
+    if (!hhmm) return 0;
+    const [h,m] = hhmm.split(':').map(Number);
+    return h * 60 + m;
+  }
+  function nowMin() {
+    const n = new Date();
+    return n.getHours() * 60 + n.getMinutes();
+  }
+  function formatTime(hhmm) { return hhmm || '--:--'; }
+
+  // ── Determine current + next prayer ──────────────────────────
+  function getPrayerStatus() {
+    const now = nowMin();
+    const prayable = PRAYERS.filter(p => !p.marker);
+    let current = null, next = null;
+    for (let i = 0; i < prayable.length; i++) {
+      const start = toMin(times[prayable[i].key]);
+      const end = i + 1 < prayable.length ? toMin(times[prayable[i+1].key]) : toMin(times[prayable[0].key]) + 24*60;
+      if (now >= start && now < end) {
+        current = prayable[i].key;
+        next = prayable[(i+1) % prayable.length];
+        break;
+      }
+    }
+    if (!current && prayable.length) {
+      // before fajr
+      next = prayable[0];
+    }
+    return { current, next };
+  }
+
+  // ── Countdown to next prayer ──────────────────────────────────
+  function countdownTo(key) {
+    if (!times[key]) return '';
+    const now = nowMin();
+    let target = toMin(times[key]);
+    if (target <= now) target += 24 * 60;
+    const diff = target - now;
+    const h = Math.floor(diff / 60);
+    const m = diff % 60;
+    if (h > 0) return `in ${h}h ${m}m`;
+    return `in ${m}m`;
+  }
+
+  // ── Streak calculation ────────────────────────────────────────
+  function calcStreak() {
+    const s = load();
+    const logs = s.logs || {};
+    let streak = 0;
+    const d = new Date();
+    // walk back days
+    for (let i = 0; i < 365; i++) {
+      const k = ymd(d);
+      const dayLog = logs[k] || {};
+      const prayable = PRAYERS.filter(p => !p.marker);
+      const done = prayable.filter(p => dayLog[p.key]).length;
+      if (done === prayable.length) { streak++; d.setDate(d.getDate()-1); }
+      else if (k === today() && done > 0) { streak++; d.setDate(d.getDate()-1); }
+      else break;
+    }
+    return streak;
+  }
+
+  // ── Toggle prayer ─────────────────────────────────────────────
+  function togglePrayer(key) {
+    const s = load();
+    s.logs = s.logs || {};
+    s.logs[today()] = s.logs[today()] || {};
+    s.logs[today()][key] = !s.logs[today()][key];
+    save(s);
+    render();
+    renderCalendar();
+  }
+
+  // ── Ring color ────────────────────────────────────────────────
+  function ringColor(fraction) {
+    if (fraction >= 1) return '#52B788';
+    if (fraction >= 0.6) return '#74C69D';
+    if (fraction > 0) return '#F2C063';
+    return 'rgba(255,255,255,0.12)';
+  }
+
+  // ── Render ring ───────────────────────────────────────────────
+  function renderRing(done, total) {
+    const C = 2 * Math.PI * 46;
+    const fill = document.getElementById('ringFill');
+    fill.setAttribute('stroke-dasharray', C);
+    const frac = total ? done / total : 0;
+    fill.setAttribute('stroke-dashoffset', C * (1 - frac));
+    fill.style.stroke = ringColor(frac);
+
+    document.getElementById('ringNum').textContent = done;
+    document.getElementById('ringDenom').textContent = 'of ' + total;
+
+    let label, sub;
+    if (done === 0)     { label = 'No prayers tracked yet'; sub = 'Tap a prayer below to log it.'; }
+    else if (done < total) { label = 'Keep going'; sub = (total - done) + ' prayer' + (total - done !== 1 ? 's' : '') + ' remaining today.'; }
+    else                { label = 'All prayers done'; sub = 'Solid day. Come back tomorrow.'; }
+    document.getElementById('ringLabel').textContent = label;
+    document.getElementById('ringSub').textContent   = sub;
+
+    const streak = calcStreak();
+    document.getElementById('ringStreakNum').textContent = streak;
+    const streakEl = document.getElementById('ringStreak');
+    streakEl.classList.toggle('active', streak > 0);
+  }
+
+  // ── Render prayer list ────────────────────────────────────────
+  function render() {
+    const s = load();
+    const todayLog = (s.logs || {})[today()] || {};
+    const { current, next } = getPrayerStatus();
+    const prayable = PRAYERS.filter(p => !p.marker);
+    const done = prayable.filter(p => todayLog[p.key]).length;
+
+    renderRing(done, prayable.length);
+
+    const list = document.getElementById('prayerList');
+    list.innerHTML = '';
+
+    PRAYERS.forEach(p => {
+      const row = document.createElement('div');
+      row.className = 'prayer-row' +
+        (!p.marker && todayLog[p.key] ? ' done' : '') +
+        (!p.marker && current === p.key ? ' now' : '') +
+        (p.marker ? ' sunrise' : '');
+
+      // Check circle
+      const check = document.createElement('div');
+      check.className = 'prayer-check';
+      if (p.marker) {
+        check.textContent = p.emoji;
+      } else if (todayLog[p.key]) {
+        check.textContent = '✓';
+        check.style.color = '#0A0A0B';
+        check.style.fontWeight = '800';
+        check.style.fontSize = '16px';
+      } else {
+        check.textContent = '';
+      }
+
+      // Info
+      const info = document.createElement('div');
+      info.className = 'prayer-info';
+      const nameEl = document.createElement('div');
+      nameEl.className = 'prayer-name';
+
+      const nameSpan = document.createElement('span');
+      nameSpan.textContent = p.label;
+
+      const iconSpan = document.createElement('span');
+      iconSpan.className = 'prayer-icon';
+      iconSpan.textContent = p.emoji;
+
+      const nowBadge = document.createElement('span');
+      nowBadge.className = 'prayer-now-badge';
+      nowBadge.textContent = 'Now';
+
+      nameEl.appendChild(nameSpan);
+      nameEl.appendChild(iconSpan);
+      if (!p.marker && current === p.key) nameEl.appendChild(nowBadge);
+      info.appendChild(nameEl);
+
+      // Countdown for next prayer
+      const countdown = document.createElement('div');
+      countdown.className = 'prayer-countdown';
+      if (!p.marker && next && next.key === p.key && current !== p.key) {
+        countdown.textContent = countdownTo(p.key);
+        countdown.classList.add('visible');
+      }
+
+      // Time
+      const timeEl = document.createElement('div');
+      timeEl.className = 'prayer-time';
+      timeEl.textContent = formatTime(times[p.key]);
+
+      // Bell button
+      const bell = document.createElement('button');
+      bell.className = 'prayer-bell' + ((s.muted && s.muted[p.key]) ? ' muted' : '');
+      bell.title = 'Mute notifications';
+      bell.textContent = (s.muted && s.muted[p.key]) ? '🔕' : '🔔';
+      bell.addEventListener('click', e => {
+        e.stopPropagation();
+        const st = load();
+        st.muted = st.muted || {};
+        st.muted[p.key] = !st.muted[p.key];
+        save(st);
+        render();
+      });
+
+      row.appendChild(check);
+      row.appendChild(info);
+      row.appendChild(countdown);
+      row.appendChild(timeEl);
+      row.appendChild(bell);
+
+      if (!p.marker) {
+        row.addEventListener('click', () => {
+          row.classList.add('sweep');
+          setTimeout(() => row.classList.remove('sweep'), 400);
+          togglePrayer(p.key);
+        });
+      }
+
+      list.appendChild(row);
+    });
+  }
+
+  // ── Calendar ──────────────────────────────────────────────────
+  let calView = 'week';
+  let calOffset = 0;
+
+  window.setView = function(v) {
+    calView = v;
+    calOffset = 0;
+    document.getElementById('btnWeek').classList.toggle('active', v === 'week');
+    document.getElementById('btnMonth').classList.toggle('active', v === 'month');
+    renderCalendar();
+  };
+  window.navOffset = function(dir) {
+    calOffset += dir;
+    renderCalendar();
+  };
+
+  function prayerFraction(dateKey) {
+    const s = load();
+    const log = (s.logs || {})[dateKey] || {};
+    const prayable = PRAYERS.filter(p => !p.marker);
+    const done = prayable.filter(p => log[p.key]).length;
+    return { done, total: prayable.length, frac: prayable.length ? done / prayable.length : 0 };
+  }
+
+  function miniRingHTML(frac, size) {
+    const r = size/2 - 3;
+    const C = 2 * Math.PI * r;
+    const color = frac >= 1 ? '#52B788' : frac > 0 ? '#F2C063' : 'rgba(255,255,255,0.1)';
+    return `<svg viewBox="0 0 ${size} ${size}">
+      <circle class="cal-ring-track" cx="${size/2}" cy="${size/2}" r="${r}"/>
+      <circle class="cal-ring-fill"
+        cx="${size/2}" cy="${size/2}" r="${r}"
+        stroke-dasharray="${C}"
+        stroke-dashoffset="${C*(1-frac)}"
+        stroke="${color}"
+        style="transform:rotate(-90deg);transform-origin:${size/2}px ${size/2}px"
+      />
+    </svg>`;
+  }
+
+  function renderCalendar() {
+    const body = document.getElementById('calBody');
+    const todayKey = today();
+
+    if (calView === 'week') {
+      // week grid
+      const now = new Date();
+      now.setDate(now.getDate() + calOffset * 7);
+      // find Monday of this week
+      const day = now.getDay();
+      const mon = new Date(now);
+      mon.setDate(now.getDate() - ((day === 0 ? 7 : day) - 1));
+
+      const DOW = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+      let html = '<div class="cal-grid">';
+      DOW.forEach(d => { html += `<div class="cal-dow">${d}</div>`; });
+
+      for (let i = 0; i < 7; i++) {
+        const d = new Date(mon);
+        d.setDate(mon.getDate() + i);
+        const key = ymd(d);
+        const { frac } = prayerFraction(key);
+        const isToday = key === todayKey;
+        html += `<div class="cal-day${isToday?' today':''}">
+          <div class="cal-day-num">${d.getDate()}</div>
+          <div class="cal-ring">${miniRingHTML(frac, 32)}</div>
+        </div>`;
+      }
+      html += '</div>';
+      body.innerHTML = html;
+
+      // month label
+      const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+      document.getElementById('calMonthLabel').textContent = months[mon.getMonth()] + ' ' + mon.getFullYear();
+
+    } else {
+      // month grid
+      const now = new Date();
+      now.setDate(1);
+      now.setMonth(now.getMonth() + calOffset);
+      const year = now.getFullYear(), month = now.getMonth();
+      const firstDay = new Date(year, month, 1).getDay();
+      const startOffset = (firstDay === 0 ? 6 : firstDay - 1);
+      const daysInMonth = new Date(year, month+1, 0).getDate();
+
+      const DOW = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+      let html = '<div class="month-grid">';
+      DOW.forEach(d => { html += `<div class="cal-dow" style="padding-bottom:6px;">${d}</div>`; });
+
+      for (let i = 0; i < startOffset; i++) html += '<div class="month-cell empty"></div>';
+      for (let d = 1; d <= daysInMonth; d++) {
+        const key = year+'-'+pad2(month+1)+'-'+pad2(d);
+        const { frac, done } = prayerFraction(key);
+        const isToday = key === todayKey;
+        const dotColor = frac >= 1 ? '#52B788' : frac > 0.5 ? '#74C69D' : frac > 0 ? '#F2C063' : 'transparent';
+        html += `<div class="month-cell${isToday?' today':''}" style="background:rgba(82,183,136,${(frac*0.15).toFixed(2)})">
+          ${d}
+          <div class="month-cell-dot" style="background:${dotColor}"></div>
+        </div>`;
+      }
+      html += '</div>';
+      body.innerHTML = html;
+
+      const months = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+      document.getElementById('calMonthLabel').textContent = months[month] + ' ' + year;
+    }
+  }
+
+  window.shareProgress = function() {
+    const s = load();
+    const todayLog = (s.logs || {})[today()] || {};
+    const prayable = PRAYERS.filter(p => !p.marker);
+    const done = prayable.filter(p => todayLog[p.key]).length;
+    const streak = calcStreak();
+    const text = `🕌 Prayer tracker — ${done}/${prayable.length} today · ${streak} day streak`;
+    if (navigator.share) {
+      navigator.share({ title: 'Prayer Tracker', text }).catch(()=>{});
+    } else {
+      navigator.clipboard && navigator.clipboard.writeText(text);
+    }
+  };
+
+  // ── Tick ──────────────────────────────────────────────────────
+  setInterval(() => { render(); renderCalendar(); }, 30000);
+
+  // ── Cloud sync ────────────────────────────────────────────────
+  document.addEventListener('DOMContentLoaded', function () {
+    if (typeof initCloudSync !== 'function') return;
+    initCloudSync({
+      appKey: 'prayer',
+      syncedKeys: [STORE],
+      onApplied: function () { render(); renderCalendar(); }
+    });
+  });
+
+  // ── Boot ──────────────────────────────────────────────────────
+  getLocation();
+  render();
+  renderCalendar();
+
+})();
+</script>
+</body>
+</html>
